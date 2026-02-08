@@ -12,6 +12,11 @@ import ParseSwift
 class FeedViewController: UIViewController {
 
     @IBOutlet weak var tableView: UITableView!
+    private let refreshControl = UIRefreshControl()
+    private let pageSize = 10
+    private var isLoadingPosts = false
+    private var hasMorePosts = true
+    private let loadingMoreIndicator = UIActivityIndicatorView(style: .medium)
 
     private var posts = [Post]() {
         didSet {
@@ -32,27 +37,82 @@ class FeedViewController: UIViewController {
         tableView.delegate = self
         tableView.dataSource = self
         tableView.allowsSelection = false
+
+        refreshControl.addTarget(self, action: #selector(onPullToRefresh), for: .valueChanged)
+        tableView.refreshControl = refreshControl
+        configureLoadingMoreIndicator()
     }
 
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
-        queryPosts()
+        queryPosts(reset: true)
     }
 
-    private func queryPosts() {
+    @objc private func onPullToRefresh() {
+        queryPosts(reset: true)
+    }
+
+    private func configureLoadingMoreIndicator() {
+        loadingMoreIndicator.hidesWhenStopped = true
+        loadingMoreIndicator.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(loadingMoreIndicator)
+        NSLayoutConstraint.activate([
+            loadingMoreIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loadingMoreIndicator.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
+        ])
+    }
+
+    private func setLoadingFooterVisible(_ isVisible: Bool) {
+        if isVisible {
+            loadingMoreIndicator.startAnimating()
+        } else {
+            loadingMoreIndicator.stopAnimating()
+        }
+    }
+
+    private func queryPosts(reset: Bool) {
+        guard !isLoadingPosts else {
+            if reset {
+                refreshControl.endRefreshing()
+            }
+            return
+        }
+
+        if !reset && !hasMorePosts {
+            return
+        }
+
+        isLoadingPosts = true
+        setLoadingFooterVisible(!reset)
+
+        let skip = reset ? 0 : posts.count
         let query = Post.query()
             .include("user")
             .order([.descending("createdAt")])
+            .limit(pageSize)
+            .skip(skip)
 
         query.find { [weak self] result in
             DispatchQueue.main.async {
+                guard let self else { return }
+                defer {
+                    self.isLoadingPosts = false
+                    self.refreshControl.endRefreshing()
+                    self.setLoadingFooterVisible(false)
+                }
+
                 switch result {
-                case .success(let posts):
-                    self?.posts = posts
+                case .success(let fetchedPosts):
+                    if reset {
+                        self.posts = fetchedPosts
+                    } else {
+                        self.posts.append(contentsOf: fetchedPosts)
+                    }
+                    self.hasMorePosts = fetchedPosts.count == self.pageSize
                 case .failure(let error):
-                    self?.showAlert(description: error.localizedDescription)
+                    self.showAlert(description: error.localizedDescription)
                 }
             }
         }
@@ -99,4 +159,10 @@ extension FeedViewController: UITableViewDataSource {
     }
 }
 
-extension FeedViewController: UITableViewDelegate { }
+extension FeedViewController: UITableViewDelegate {
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        let lastPostIndex = posts.count - 1
+        guard indexPath.row == lastPostIndex else { return }
+        queryPosts(reset: false)
+    }
+}

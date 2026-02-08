@@ -25,12 +25,10 @@ class PostCell: UITableViewCell {
         // Caption
         captionLabel.text = post.caption
 
-        // Date
-        if let date = post.createdAt {
-            dateLabel.text = DateFormatter.postFormatter.string(from: date)
-        } else {
-            dateLabel.text = ""
-        }
+        // Upload metadata
+        let timeText = post.createdAt.map { DateFormatter.postTimeFormatter.string(from: $0) } ?? "Unknown time"
+        let locationText = post.locationName ?? "Unknown location"
+        dateLabel.text = "\(timeText) • \(locationText)"
 
         // Image
         if let imageFile = post.imageFile,

@@ -9,6 +9,7 @@ import UIKit
 
 import PhotosUI
 import ParseSwift
+import CoreLocation
 
 
 class PostViewController: UIViewController {
@@ -19,9 +20,13 @@ class PostViewController: UIViewController {
     @IBOutlet weak var previewImageView: UIImageView!
 
     private var pickedImage: UIImage?
+    private let locationManager = CLLocationManager()
+    private let geocoder = CLGeocoder()
+    private var currentLocation: CLLocation?
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        configureLocationManager()
     }
 
     @IBAction func onPickedImageTapped(_ sender: UIBarButtonItem) {
@@ -56,8 +61,20 @@ class PostViewController: UIViewController {
         post.imageFile = imageFile
         post.caption = captionTextField.text
         post.user = User.current
+        guard let location = currentLocation else {
+            save(post: post)
+            return
+        }
 
-        // Save post to Parse
+        post.location = try? ParseGeoPoint(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+        geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
+            var postToSave = post
+            postToSave.locationName = Self.formattedLocationName(from: placemarks?.first)
+            self?.save(post: postToSave)
+        }
+    }
+
+    private func save(post: Post) {
         post.save { [weak self] result in
             DispatchQueue.main.async {
                 switch result {
@@ -70,9 +87,20 @@ class PostViewController: UIViewController {
                 }
             }
         }
+    }
 
-
-
+    private static func formattedLocationName(from placemark: CLPlacemark?) -> String? {
+        guard let placemark else { return nil }
+        if let city = placemark.locality, let state = placemark.administrativeArea {
+            return "\(city), \(state)"
+        }
+        if let city = placemark.locality {
+            return city
+        }
+        if let state = placemark.administrativeArea {
+            return state
+        }
+        return placemark.country
     }
 
     @IBAction func onViewTapped(_ sender: Any) {
@@ -85,6 +113,20 @@ class PostViewController: UIViewController {
         let action = UIAlertAction(title: "OK", style: .default)
         alertController.addAction(action)
         present(alertController, animated: true)
+    }
+
+    private func configureLocationManager() {
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+
+        switch locationManager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.requestLocation()
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        default:
+            break
+        }
     }
 }
 
@@ -118,4 +160,30 @@ extension PostViewController: PHPickerViewControllerDelegate {
     }
 }
 
-s
+extension PostViewController: CLLocationManagerDelegate {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        currentLocation = locations.last
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("❌ Location error: \(error.localizedDescription)")
+    }
+}
